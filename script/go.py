@@ -69,7 +69,7 @@ def pick_goal(user_response, found_objects):
     )['choices']
 
     f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
-    f.write("Prompt: {}".format(prompt)
+    f.write("Prompt: {}".format(prompt))
     f.close()
 
     if len(gpt_response) > 0:
@@ -82,7 +82,7 @@ def pick_goal(user_response, found_objects):
         reasonable_goal = goal_score > 5
 
         f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
-        f.write("Response: {}".format(gpt_response)
+        f.write("Response: {}".format(gpt_response))
         f.close()
 
 def handle_depth_image(data):
@@ -113,6 +113,8 @@ if __name__ == '__main__':
     
     darknet_subscriber = rospy.Subscriber('bounding_boxes', BoundingBoxes, handle_detections)
     depth_subscriber = rospy.Subscriber('/camera/depth/image_raw', Image, handle_depth_image)
+
+    rospy.spin()
     
     rate = rospy.Rate(0.1) # ROS Rate at 5Hz
     
@@ -150,14 +152,14 @@ if __name__ == '__main__':
                 )['choices']
 
                 f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
-                f.write("Prompt: {}".format(check_prompt)
+                f.write("Prompt: {}".format(check_prompt))
                 f.close()
 
                 if len(gpt_response) > 0:
                     gpt_response = gpt_response[0]['text'].strip()
 
                     f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
-                    f.write("Response: {}".format(gpt_response)
+                    f.write("Response: {}".format(gpt_response))
                     f.close()
                 
                 # ask user if it meets their needs

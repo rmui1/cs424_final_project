@@ -188,7 +188,7 @@ include_directories(
 #   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 # )
 
-catkin_install_python(PROGRAMS script/assign3_ball.py script/assign3_fruit.py
+catkin_install_python(PROGRAMS script/go.py
     DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
