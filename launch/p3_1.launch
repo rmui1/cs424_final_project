@@ -1,0 +1,3 @@
+<launch>
+    <node pkg="p3_rmui1" name="assign3_ball" type="assign3_ball.py" cwd="node" output="screen"/>
+</launch>
