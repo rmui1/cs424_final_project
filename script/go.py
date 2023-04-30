@@ -4,10 +4,10 @@ import cv2
 import numpy as np
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import Twist
-from darknet_ros_msgs.msg import BoundingBoxes
 from cv_bridge import CvBridge, CvBridgeError
 import openai
 from dotenv import load_dotenv
+from detect import detect
 
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -25,21 +25,23 @@ first_third = -1
 last_third = -1
 
 def handle_image(data):
-    global image_publisher
-    image_publisher.publish(data)
 
-def handle_detections(data):
-    print(data)
+    darknet_results = detect(data)
+    obj_info = {r[0].decode('utf-8'): r[2] for r in darknet_results}
+
+    print(obj_info)
 
     # replace previous set of objects with current set
     global found_objects
-    found_objects = set()
+    found_objects = set(obj_info.keys())
 
     if len(goal_object) == 0:
         pick_goal(found_objects)
     
-    global goal_coordinates
     # set goal coordinates to center of bounding box for goal_object
+    global goal_coordinates
+    if goal_object in obj_list:
+        goal_coordinates = obj_list[goal_object][0:2]
 
 def pick_goal(user_response, found_objects):
     # ask gpt3 to pick item and score its usefulness from 1-10 (in format: item;score)
@@ -108,10 +110,7 @@ if __name__ == '__main__':
     rospy.init_node('turtlebot', anonymous=True)
     velocity_publisher = rospy.Publisher('/cmd_vel_mux/input/navi', Twist, queue_size=2)
     
-    image_subscriber = rospy.Subscriber('/camera/color/image_raw', Image, handle_image)
-    image_publisher = rospy.Publisher('/camera_reading', Image, queue_size=2)
-    
-    darknet_subscriber = rospy.Subscriber('bounding_boxes', BoundingBoxes, handle_detections)
+    image_subscriber = rospy.Subscriber('/camera/color/image_raw', Image, handle_image)    
     depth_subscriber = rospy.Subscriber('/camera/depth/image_raw', Image, handle_depth_image)
 
     rospy.spin()
@@ -183,8 +182,6 @@ if __name__ == '__main__':
                     else:
                         vel_msg.angular.z = 0
                         velocity_publisher.publish(vel_msg)
-
-                        rospy.wait_for_message('bounding_boxes', BoundingBoxes)
 
                         if len(new_goal) > 0:
                             if new_goal in found_objects:
