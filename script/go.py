@@ -7,7 +7,16 @@ from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge, CvBridgeError
 import openai
 from dotenv import load_dotenv
-from detect import detect
+
+from ctypes import *
+import math
+import random
+import os
+import cv2
+import numpy as np
+
+darknet_location = os.getcwd()[:os.getcwd().find('catkin_ws')] + 'catkin_ws/src/cs424_final_project/darknet/'
+print(darknet_location)
 
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -24,6 +33,108 @@ distance_to_goal = -1
 first_third = -1
 last_third = -1
 
+user_response = "I'm hungry. "
+
+class BOX(Structure):
+    _fields_ = [("x", c_float),
+                ("y", c_float),
+                ("w", c_float),
+                ("h", c_float)]
+
+class DETECTION(Structure):
+    _fields_ = [("bbox", BOX),
+                ("classes", c_int),
+                ("prob", POINTER(c_float)),
+                ("mask", POINTER(c_float)),
+                ("objectness", c_float),
+                ("sort_class", c_int)]
+
+
+class IMAGE(Structure):
+    _fields_ = [("w", c_int),
+                ("h", c_int),
+                ("c", c_int),
+                ("data", POINTER(c_float))]
+
+class METADATA(Structure):
+    _fields_ = [("classes", c_int),
+                ("names", POINTER(c_char_p))]
+
+    
+lib = CDLL(darknet_location+"libdarknet.so", RTLD_GLOBAL)
+lib.network_width.argtypes = [c_void_p]
+lib.network_width.restype = c_int
+lib.network_height.argtypes = [c_void_p]
+lib.network_height.restype = c_int
+
+set_gpu = lib.cuda_set_device
+set_gpu.argtypes = [c_int]
+
+get_network_boxes = lib.get_network_boxes
+get_network_boxes.argtypes = [c_void_p, c_int, c_int, c_float, c_float, POINTER(c_int), c_int, POINTER(c_int)]
+get_network_boxes.restype = POINTER(DETECTION)
+
+make_network_boxes = lib.make_network_boxes
+make_network_boxes.argtypes = [c_void_p]
+make_network_boxes.restype = POINTER(DETECTION)
+
+free_detections = lib.free_detections
+free_detections.argtypes = [POINTER(DETECTION), c_int]
+
+load_net = lib.load_network
+load_net.argtypes = [c_char_p, c_char_p, c_int]
+load_net.restype = c_void_p
+
+do_nms_obj = lib.do_nms_obj
+do_nms_obj.argtypes = [POINTER(DETECTION), c_int, c_int, c_float]
+
+load_meta = lib.get_metadata
+lib.get_metadata.argtypes = [c_char_p]
+lib.get_metadata.restype = METADATA
+
+predict_image = lib.network_predict_image
+predict_image.argtypes = [c_void_p, IMAGE]
+predict_image.restype = POINTER(c_float)
+
+net = load_net(bytes(darknet_location + "yolov3.cfg", 'utf-8'), bytes(darknet_location + "yolov3.weights", 'utf-8'), 0)
+meta = load_meta(bytes(darknet_location + "coco.data", 'utf-8'))
+
+def np_image_to_c_IMAGE(input_frame):
+    h, w, c = input_frame.shape
+    flattened_image = input_frame.transpose(2, 0, 1).flatten().astype(np.float32)/255.
+    c_float_p = POINTER(c_float)
+    c_float_p_frame = flattened_image.ctypes.data_as(c_float_p)
+    C_IMAGE_frame = IMAGE(w,h,c,c_float_p_frame)
+    C_IMAGE_frame.ref = c_float_p_frame     # extra reference to data stored
+    return C_IMAGE_frame
+
+def detect(data, thresh=.5, hier_thresh=.5, nms=.45):
+    bridge = CvBridge()
+
+    try:
+        cv2_image = bridge.imgmsg_to_cv2(data, "rgb8")
+    except CvBridgeError as e:
+        print(e)
+
+    im = np_image_to_c_IMAGE(cv2_image)
+
+    num = c_int(0)
+    pnum = pointer(num)
+    predict_image(net, im)
+    dets = get_network_boxes(net, im.w, im.h, thresh, hier_thresh, None, 0, pnum)
+    num = pnum[0]
+    if (nms): do_nms_obj(dets, num, meta.classes, nms)
+
+    res = []
+    for j in range(num):
+        for i in range(meta.classes):
+            if dets[j].prob[i] > 0:
+                b = dets[j].bbox
+                res.append((meta.names[i], dets[j].prob[i], (b.x, b.y, b.w, b.h)))
+    res = sorted(res, key=lambda x: -x[1])
+    free_detections(dets, num)
+    return res
+
 def handle_image(data):
 
     darknet_results = detect(data)
@@ -36,14 +147,19 @@ def handle_image(data):
     found_objects = set(obj_info.keys())
 
     if len(goal_object) == 0:
-        pick_goal(found_objects)
+        pick_goal(user_response, found_objects)
     
     # set goal coordinates to center of bounding box for goal_object
     global goal_coordinates
-    if goal_object in obj_list:
-        goal_coordinates = obj_list[goal_object][0:2]
+    if goal_object in obj_info:
+        goal_coordinates = obj_info[goal_object][0:2]
 
 def pick_goal(user_response, found_objects):
+    print(found_objects, len(found_objects))
+
+    if len(found_objects) == 0:
+        return
+
     # ask gpt3 to pick item and score its usefulness from 1-10 (in format: item;score)
     global prompt
     prompt += user_response
@@ -71,7 +187,7 @@ def pick_goal(user_response, found_objects):
     )['choices']
 
     f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
-    f.write("Prompt: {}".format(prompt))
+    f.write("\nPrompt: {}".format(prompt))
     f.close()
 
     if len(gpt_response) > 0:
@@ -81,10 +197,10 @@ def pick_goal(user_response, found_objects):
         goal_object, goal_score, goal_explanation = gpt_response.split(';')
             
         global reasonable_goal
-        reasonable_goal = goal_score > 5
+        reasonable_goal = int(goal_score) > 5
 
         f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
-        f.write("Response: {}".format(gpt_response))
+        f.write("\nResponse: {}".format(gpt_response))
         f.close()
 
 def handle_depth_image(data):
@@ -107,6 +223,8 @@ def handle_depth_image(data):
         distance_to_goal = -1
 
 if __name__ == '__main__':
+    # set_gpu(1)
+
     rospy.init_node('turtlebot', anonymous=True)
     velocity_publisher = rospy.Publisher('/cmd_vel_mux/input/navi', Twist, queue_size=2)
     
@@ -131,7 +249,6 @@ if __name__ == '__main__':
                 vel_msg.linear.x = 0
                 vel_msg.angular.z = 0
                 reached_goal = True
-            global velocity_publisher
             velocity_publisher.publish(vel_msg)
 
         if reached_goal:
@@ -151,14 +268,14 @@ if __name__ == '__main__':
                 )['choices']
 
                 f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
-                f.write("Prompt: {}".format(check_prompt))
+                f.write("\nPrompt: {}".format(check_prompt))
                 f.close()
 
                 if len(gpt_response) > 0:
                     gpt_response = gpt_response[0]['text'].strip()
 
                     f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
-                    f.write("Response: {}".format(gpt_response))
+                    f.write("\nResponse: {}".format(gpt_response))
                     f.close()
                 
                 # ask user if it meets their needs
@@ -194,7 +311,7 @@ if __name__ == '__main__':
                         start_orientation_2 = orientation
 
                 if not see_new_goal:
-                    pick_goal(all_found_objects)
+                    pick_goal(user_response, all_found_objects)
                     new_goal = goal_object
             
     rospy.spin()
