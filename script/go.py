@@ -33,7 +33,7 @@ distance_to_goal = -1
 first_third = -1
 last_third = -1
 
-user_response = "I'm hungry. "
+user_response = ""
 
 class BOX(Structure):
     _fields_ = [("x", c_float),
@@ -140,29 +140,26 @@ def handle_image(data):
     darknet_results = detect(data)
     obj_info = {r[0].decode('utf-8'): r[2] for r in darknet_results}
 
-    print(obj_info)
-
     # replace previous set of objects with current set
     global found_objects
     found_objects = set(obj_info.keys())
 
     if len(goal_object) == 0:
-        pick_goal(user_response, found_objects)
+        pick_goal(found_objects)
+        print(goal_object)
     
     # set goal coordinates to center of bounding box for goal_object
     global goal_coordinates
     if goal_object in obj_info:
         goal_coordinates = obj_info[goal_object][0:2]
 
-def pick_goal(user_response, found_objects):
-    print(found_objects, len(found_objects))
-
+def pick_goal(found_objects):
     if len(found_objects) == 0:
         return
 
     # ask gpt3 to pick item and score its usefulness from 1-10 (in format: item;score)
     global prompt
-    prompt += user_response
+    prompt += user_response + " "
     
     if len(prompt) == 0:
         prompt += '''There\'s a {}. Which item is best for me? Answer with one word, all lowercase,
@@ -195,7 +192,7 @@ def pick_goal(user_response, found_objects):
 
         global goal_object, goal_score, goal_explanation
         goal_object, goal_score, goal_explanation = gpt_response.split(';')
-            
+
         global reasonable_goal
         reasonable_goal = int(goal_score) > 5
 
@@ -230,11 +227,19 @@ if __name__ == '__main__':
     
     image_subscriber = rospy.Subscriber('/camera/color/image_raw', Image, handle_image)    
     depth_subscriber = rospy.Subscriber('/camera/depth/image_raw', Image, handle_depth_image)
-
-    rospy.spin()
     
     rate = rospy.Rate(0.1) # ROS Rate at 5Hz
     
+    user_response = input('What are you in the mood for? ')
+
+    while not rospy.is_shutdown():
+        last_goal = ""
+        if goal_object != last_goal:
+            print('goal info:', goal_object, goal_score, goal_explanation)
+            last_goal = goal_object
+    
+    rospy.spin()
+
     while not rospy.is_shutdown():
         reached_goal = False
         if goal_coordinates[0] > 0 and goal_coordinates[1] > 0:
@@ -253,9 +258,13 @@ if __name__ == '__main__':
 
         if reached_goal:
             if reasonable_goal:
+                # ask user if it meets their needs
+
+                user_satisfaction = input("Here's a {}. {} Does it meet your request? ".format(goal_object, goal_explanation))
+
                 check_prompt = '''A user said, "{}". Is this user satisfied with the service they were
                                     provided? Answer 0 for no, 1 for yes.\n\n
-                                '''.format(user_response)
+                                '''.format(user_satisfaction)
 
                 gpt_response = openai.Completion.create(
                     model="text-davinci-003",
@@ -278,7 +287,6 @@ if __name__ == '__main__':
                     f.write("\nResponse: {}".format(gpt_response))
                     f.close()
                 
-                # ask user if it meets their needs
                 if gpt_response == '1':
                     break
 
@@ -311,7 +319,7 @@ if __name__ == '__main__':
                         start_orientation_2 = orientation
 
                 if not see_new_goal:
-                    pick_goal(user_response, all_found_objects)
+                    pick_goal(all_found_objects)
                     new_goal = goal_object
             
     rospy.spin()
