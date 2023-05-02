@@ -16,6 +16,8 @@ import os
 import cv2
 import numpy as np
 
+import time
+
 darknet_location = os.getcwd()[:os.getcwd().find('catkin_ws')] + 'catkin_ws/src/cs424_final_project/darknet/'
 
 load_dotenv()
@@ -23,7 +25,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 prompt = ""
 found_objects = set()
-goal_object = ''
+goal_object = 'nothing'
 goal_coordinates = (-1, -1)
 goal_score = 0
 goal_explanation = ''
@@ -169,6 +171,8 @@ def pick_goal(found_objects):
     # ask gpt3 to pick item and score its usefulness from 1-10 (in format: item;score)
     global prompt
     
+    print('asking gpt')
+
     if len(prompt) == 0:
         prompt += '''{}. I have the following items: {}. Which item is best for me? Pick one of the items and 
                         answer with one word, all lowercase, and no punctuation. Then, rate the object in terms 
@@ -183,35 +187,38 @@ def pick_goal(found_objects):
     
     global goal_object, goal_score, goal_explanation, reasonable_goal
 
-    while goal_object not in found_objects:
-        gpt_response = openai.Completion.create(
-            model="text-davinci-003",
-            prompt=prompt,
-            temperature=0.7,
-            max_tokens=2048,
-            top_p=1,
-            frequency_penalty=0,
-            presence_penalty=0
-        )['choices']
+    gpt_response = openai.Completion.create(
+        model="text-davinci-003",
+        prompt=prompt,
+        temperature=0.7,
+        max_tokens=2048,
+        top_p=1,
+        frequency_penalty=0,
+        presence_penalty=0
+    )['choices']
 
-        if len(gpt_response) > 0:
-            gpt_response = gpt_response[0]['text'].strip()
+    if len(gpt_response) > 0:
+        print('gpt responded with ', gpt_response)
 
-            goal_object, goal_score, goal_explanation = gpt_response.split(';')
-            reasonable_goal = int(goal_score) > 5
+        gpt_response = gpt_response[0]['text'].strip()
 
-            prompt += gpt_response + '\n\n'
+        goal_object, goal_score, goal_explanation = gpt_response.split(';')
+        reasonable_goal = int(goal_score) > 5
 
-            f = open("/home/rmui1/catkin_ws/chat_records.txt", "w")
-            f.write(prompt)
-            f.close()
+        prompt += gpt_response + '\n\n'
 
-            print(gpt_response)
+        f = open("/home/rmui1/catkin_ws/chat_records.txt", "w")
+        f.write(prompt)
+        f.close()
 
-            if goal_object not in found_objects:
-                prompt += '''That's not one of the available items. The 
-                    available items are: {}. Pick again from the available items.
-                '''.format(', '.join(found_objects))
+        if goal_object not in found_objects:
+            goal_object = ""
+
+            # prompt += '''That's not one of the available items. The 
+            #     available items are: {}. Pick again from the available items.
+            # '''.format(', '.join(found_objects))
+
+    print(goal_object)
 
 def handle_depth_image(data):
     bridge = CvBridge()
@@ -255,16 +262,18 @@ if __name__ == '__main__':
         reached_goal = False
         if goal_coordinates[0] > 0 and goal_coordinates[1] > 0:
 
+            print('have goal coordinates')
+
             # print(goal_coordinates[0], distance_to_goal)
             # print(first_third, last_third)
 
             vel_msg = Twist()
             if first_third > 0 and goal_coordinates[1] < first_third:
                 print('right')
-                vel_msg.angular.z = 0.5
+                vel_msg.angular.z = -0.5
             elif last_third > 0 and goal_coordinates[1] > last_third:
                 print('left')
-                vel_msg.angular.z = -0.5
+                vel_msg.angular.z = 0.5
             elif distance_to_goal > 700:
                 vel_msg.linear.x = 0.25
             else:
@@ -312,9 +321,13 @@ if __name__ == '__main__':
                 if gpt_response == '1':
                     print("I'm glad to hear that!")
                     break
-                print("Alright, I'll keep looking.")
 
-            new_goal = ""
+                print("Alright, I'll keep looking.")
+            
+            goal_object = ""
+
+        if len(goal_object) == 0 or goal_object not in found_objects:
+            new_goal = goal_object
             see_new_goal = False
             while not see_new_goal and not rospy.is_shutdown():
                 # turn in circle, looking for new goal
@@ -325,22 +338,26 @@ if __name__ == '__main__':
                 start_orientation_1 = start_orientation_2 = orientation
                 while not rospy.is_shutdown() and (abs(orientation - start_orientation_1) > 0.01 or not performed_at_least_once):
                     vel_msg = Twist()
-                    if (abs(orientation - start_orientation_2) < 0.1):
+                    if (abs(orientation - start_orientation_2) < 0.25):
                         vel_msg.angular.z = 0.75
                         velocity_publisher.publish(vel_msg)
                     else:
                         vel_msg.angular.z = 0
                         velocity_publisher.publish(vel_msg)
 
+                        time.sleep(0.5)
+
                         if len(new_goal) > 0:
                             print(found_objects)
+
+                            print(new_goal, found_objects, new_goal in found_objects)
                             if new_goal in found_objects:
                                 see_new_goal = True
                                 break
 
                         all_found_objects = all_found_objects.union(found_objects)
 
-                        performed_at_least_once = True
+                        performed_at_least_once = performed_at_least_once or (abs(orientation - start_orientation_1) > 0.25)
                         start_orientation_2 = orientation
 
                 if not see_new_goal:
