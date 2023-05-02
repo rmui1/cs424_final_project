@@ -281,6 +281,9 @@ if __name__ == '__main__':
                 # ask user if it meets their needs
                 user_satisfaction = input("Here's a {}. {} Does it meet your request? ".format(goal_object, goal_explanation))
 
+                while not rospy.is_shutdown() and len(user_satisfaction) == 0:
+                    continue
+
                 check_prompt = '''When asked if they were happy with the service they were provided, a user said, "{}". 
                                     Is this user satisfied with the service? Answer 0 for no, 1 for yes.\n\n
                                 '''.format(user_satisfaction)
