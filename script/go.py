@@ -5,6 +5,7 @@ import numpy as np
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge, CvBridgeError
+from nav_msgs.msg import Odometry
 import openai
 from dotenv import load_dotenv
 
@@ -16,7 +17,6 @@ import cv2
 import numpy as np
 
 darknet_location = os.getcwd()[:os.getcwd().find('catkin_ws')] + 'catkin_ws/src/cs424_final_project/darknet/'
-print(darknet_location)
 
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -32,6 +32,7 @@ distance_to_goal = -1
 
 first_third = -1
 last_third = -1
+orientation = -1
 
 user_response = ""
 
@@ -144,14 +145,22 @@ def handle_image(data):
     global found_objects
     found_objects = set(obj_info.keys())
 
-    if len(goal_object) == 0:
+    if (len(goal_object) == 0 or goal_score == 0) and len(user_response) > 0:
         pick_goal(found_objects)
-        print(goal_object)
     
     # set goal coordinates to center of bounding box for goal_object
     global goal_coordinates
     if goal_object in obj_info:
-        goal_coordinates = obj_info[goal_object][0:2]
+        goal_coordinates = (int(obj_info[goal_object][1]), int(obj_info[goal_object][0]))
+
+    # if len(goal_object) > 0:
+    #     print('goal info:', goal_object, goal_score, goal_explanation)
+    #     print(goal_coordinates)
+    #     print(found_objects)
+
+def handle_odom(data):
+    global orientation
+    orientation = data.pose.pose.orientation.w
 
 def pick_goal(found_objects):
     if len(found_objects) == 0:
@@ -159,46 +168,50 @@ def pick_goal(found_objects):
 
     # ask gpt3 to pick item and score its usefulness from 1-10 (in format: item;score)
     global prompt
-    prompt += user_response + " "
     
     if len(prompt) == 0:
-        prompt += '''There\'s a {}. Which item is best for me? Answer with one word, all lowercase,
-                        and no punctuation. Then, rate the object in terms of its usefulness to me at the
-                        moment, from 1 to 10. Explain. Phrase your response in the
-                        form: item;number;explanation\n\n
-                    '''.format(', '.join(found_objects))
+        prompt += '''{}. I have the following items: {}. Which item is best for me? Pick one of the items and 
+                        answer with one word, all lowercase, and no punctuation. Then, rate the object in terms 
+                        of its usefulness to me at the moment, from 1 to 10. Explain in second-person point of view. 
+                        Phrase your response in the form: item;number;explanation\n\n
+                    '''.format(user_response, ', '.join(found_objects))
     else:
-        prompt += '''Pick again from these objects: {}. Don't use any previous answers unless
+        prompt += '''{}. Pick again from these objects: {}. Don't use any previous answers unless
                         there aren't any new answers. If you reuse a previous answer, say the usefulness is 0.
                         Phrase your response in the form: item;number;explanation\n\n
-                    '''.format(', '.join(found_objects))
-        
-    gpt_response = openai.Completion.create(
-        model="text-davinci-003",
-        prompt=prompt,
-        temperature=0.7,
-        max_tokens=2048,
-        top_p=1,
-        frequency_penalty=0,
-        presence_penalty=0
-    )['choices']
+                    '''.format(user_response, ', '.join(found_objects))
+    
+    global goal_object, goal_score, goal_explanation, reasonable_goal
 
-    f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
-    f.write("\nPrompt: {}".format(prompt))
-    f.close()
+    while goal_object not in found_objects:
+        gpt_response = openai.Completion.create(
+            model="text-davinci-003",
+            prompt=prompt,
+            temperature=0.7,
+            max_tokens=2048,
+            top_p=1,
+            frequency_penalty=0,
+            presence_penalty=0
+        )['choices']
 
-    if len(gpt_response) > 0:
-        gpt_response = gpt_response[0]['text'].strip()
+        if len(gpt_response) > 0:
+            gpt_response = gpt_response[0]['text'].strip()
 
-        global goal_object, goal_score, goal_explanation
-        goal_object, goal_score, goal_explanation = gpt_response.split(';')
+            goal_object, goal_score, goal_explanation = gpt_response.split(';')
+            reasonable_goal = int(goal_score) > 5
 
-        global reasonable_goal
-        reasonable_goal = int(goal_score) > 5
+            prompt += gpt_response + '\n\n'
 
-        f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
-        f.write("\nResponse: {}".format(gpt_response))
-        f.close()
+            f = open("/home/rmui1/catkin_ws/chat_records.txt", "w")
+            f.write(prompt)
+            f.close()
+
+            print(gpt_response)
+
+            if goal_object not in found_objects:
+                prompt += '''That's not one of the available items. The 
+                    available items are: {}. Pick again from the available items.
+                '''.format(', '.join(found_objects))
 
 def handle_depth_image(data):
     bridge = CvBridge()
@@ -212,42 +225,46 @@ def handle_depth_image(data):
     first_third = (int) (cols / 3)
     last_third = first_third * 2
 
+    np_image = np.array(cv_image)
+
     # get current distance to goal if one exists
     if goal_coordinates[0] > 0 and goal_coordinates[1] > 0:
         global distance_to_goal
-        distance_to_goal = cv_image[goal_coordinates]
+        distance_to_goal = np_image[goal_coordinates]
+        # print(distance_to_goal)
     else:
         distance_to_goal = -1
 
 if __name__ == '__main__':
-    # set_gpu(1)
+    f = open("/home/rmui1/catkin_ws/check_records.txt", "w")
+    f.write("")
+    f.close()
 
     rospy.init_node('turtlebot', anonymous=True)
     velocity_publisher = rospy.Publisher('/cmd_vel_mux/input/navi', Twist, queue_size=2)
     
     image_subscriber = rospy.Subscriber('/camera/color/image_raw', Image, handle_image)    
     depth_subscriber = rospy.Subscriber('/camera/depth/image_raw', Image, handle_depth_image)
-    
+    odom_subscriber = rospy.Subscriber('/odom', Odometry, handle_odom)
+
     rate = rospy.Rate(0.1) # ROS Rate at 5Hz
     
     user_response = input('What are you in the mood for? ')
-
-    while not rospy.is_shutdown():
-        last_goal = ""
-        if goal_object != last_goal:
-            print('goal info:', goal_object, goal_score, goal_explanation)
-            last_goal = goal_object
     
-    rospy.spin()
-
     while not rospy.is_shutdown():
         reached_goal = False
         if goal_coordinates[0] > 0 and goal_coordinates[1] > 0:
+
+            # print(goal_coordinates[0], distance_to_goal)
+            # print(first_third, last_third)
+
             vel_msg = Twist()
             if first_third > 0 and goal_coordinates[1] < first_third:
-                vel_msg.angular.z = 0.75
+                print('right')
+                vel_msg.angular.z = 0.5
             elif last_third > 0 and goal_coordinates[1] > last_third:
-                vel_msg.angular.z = -0.75
+                print('left')
+                vel_msg.angular.z = -0.5
             elif distance_to_goal > 700:
                 vel_msg.linear.x = 0.25
             else:
@@ -257,13 +274,15 @@ if __name__ == '__main__':
             velocity_publisher.publish(vel_msg)
 
         if reached_goal:
+            print("\n\n\n\n\n\n\nreached goal!!!\n\n\n\n\n\n\n\n\n")
+            print('goal info:', goal_object, goal_score, goal_explanation)
+            
             if reasonable_goal:
                 # ask user if it meets their needs
-
                 user_satisfaction = input("Here's a {}. {} Does it meet your request? ".format(goal_object, goal_explanation))
 
-                check_prompt = '''A user said, "{}". Is this user satisfied with the service they were
-                                    provided? Answer 0 for no, 1 for yes.\n\n
+                check_prompt = '''When asked if they were happy with the service they were provided, a user said, "{}". 
+                                    Is this user satisfied with the service? Answer 0 for no, 1 for yes.\n\n
                                 '''.format(user_satisfaction)
 
                 gpt_response = openai.Completion.create(
@@ -276,23 +295,25 @@ if __name__ == '__main__':
                     presence_penalty=0
                 )['choices']
 
-                f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
+                f = open("/home/rmui1/catkin_ws/check_records.txt", "a")
                 f.write("\nPrompt: {}".format(check_prompt))
                 f.close()
 
                 if len(gpt_response) > 0:
                     gpt_response = gpt_response[0]['text'].strip()
 
-                    f = open("/home/rmui1/catkin_ws/chat_records.txt", "a")
+                    f = open("/home/rmui1/catkin_ws/check_records.txt", "a")
                     f.write("\nResponse: {}".format(gpt_response))
                     f.close()
                 
                 if gpt_response == '1':
+                    print("I'm glad to hear that!")
                     break
+                print("Alright, I'll keep looking.")
 
             new_goal = ""
             see_new_goal = False
-            while not see_new_goal:
+            while not see_new_goal and not rospy.is_shutdown():
                 # turn in circle, looking for new goal
                 all_found_objects = set()
                 performed_at_least_once = False
@@ -309,6 +330,7 @@ if __name__ == '__main__':
                         velocity_publisher.publish(vel_msg)
 
                         if len(new_goal) > 0:
+                            print(found_objects)
                             if new_goal in found_objects:
                                 see_new_goal = True
                                 break
@@ -319,7 +341,6 @@ if __name__ == '__main__':
                         start_orientation_2 = orientation
 
                 if not see_new_goal:
+                    print("all: ", all_found_objects)
                     pick_goal(all_found_objects)
                     new_goal = goal_object
-            
-    rospy.spin()
