@@ -33,7 +33,7 @@ training_text = '''Example: I'm hungry. I have the following items: shirt. Which
                 '''
 prompt = ""
 found_objects = set()
-goal_object = 'nothing'
+goal_object = ''
 goal_coordinates = (-1, -1)
 goal_score = 0
 goal_explanation = ''
@@ -151,14 +151,13 @@ def handle_image(data):
     obj_info = {r[0].decode('utf-8'): r[2] for r in darknet_results}
 
     # replace previous set of objects with current set
-    global found_objects
+    global found_objects, goal_coordinates, goal_object
     found_objects = set(obj_info.keys())
 
     if len(goal_object) == 0 and len(user_response) > 0:
         pick_goal(found_objects)
     
     # set goal coordinates to center of bounding box for goal_object
-    global goal_coordinates, goal_object
     if goal_object in obj_info:
         goal_coordinates = (int(obj_info[goal_object][1]), int(obj_info[goal_object][0]))
     else:
@@ -173,6 +172,8 @@ def handle_odom(data):
     orientation = data.pose.pose.orientation.w
 
 def pick_goal(found_objects):
+    global goal_object, goal_score, goal_explanation, reasonable_goal
+    
     if len(found_objects) == 0:
         global goal_object
         goal_object = ""
@@ -196,8 +197,6 @@ def pick_goal(found_objects):
                         Phrase your response in the form: item;number;explanation\n\n
                     '''.format(user_response, ', '.join(found_objects))
     
-    global goal_object, goal_score, goal_explanation, reasonable_goal
-
     gpt_response = openai.Completion.create(
         model="text-davinci-003",
         prompt=prompt,
@@ -208,22 +207,24 @@ def pick_goal(found_objects):
         presence_penalty=0
     )['choices']
 
-    if len(gpt_response) > 0:
-        print('gpt responded with ', gpt_response)
+    while not rospy.is_shutdown() and len(gpt_response) == 0:
+        continue
 
-        gpt_response = gpt_response[0]['text'].strip()
+    print('gpt responded with ', gpt_response)
 
-        goal_object, goal_score, goal_explanation = gpt_response.split(';')
-        reasonable_goal = int(goal_score) > 5
+    gpt_response = gpt_response[0]['text'].strip()
 
-        prompt += gpt_response + '\n\n'
+    goal_object, goal_score, goal_explanation = gpt_response.split(';')
+    reasonable_goal = int(goal_score) > 5
 
-        f = open("/home/rmui1/catkin_ws/chat_records.txt", "w")
-        f.write(prompt)
-        f.close()
+    prompt += gpt_response + '\n\n'
 
-        if goal_object not in found_objects:
-            goal_object = ""
+    f = open("/home/rmui1/catkin_ws/chat_records.txt", "w")
+    f.write(prompt)
+    f.close()
+
+    if goal_object not in found_objects:
+        goal_object = ""
 
             # prompt += '''That's not one of the available items. The 
             #     available items are: {}. Pick again from the available items.
@@ -268,12 +269,17 @@ if __name__ == '__main__':
     rate = rospy.Rate(0.1) # ROS Rate at 5Hz
     
     user_response = input('What are you in the mood for? ')
-    
+
+    while len(user_response) == 0:
+        continue
+
+    time.sleep(2)
+
     while not rospy.is_shutdown():
         reached_goal = False
         if len(goal_object) > 0 and goal_coordinates[0] > 0 and goal_coordinates[1] > 0:
 
-            print('have goal coordinates')
+            print('have goal coordinates to ', goal_object)
 
             # print(goal_coordinates[0], distance_to_goal)
             # print(first_third, last_third)
@@ -322,12 +328,14 @@ if __name__ == '__main__':
                 f.write("\nPrompt: {}".format(check_prompt))
                 f.close()
 
-                if len(gpt_response) > 0:
-                    gpt_response = gpt_response[0]['text'].strip()
+                while not rospy.is_shutdown() and len(gpt_response) == 0:
+                    continue
 
-                    f = open("/home/rmui1/catkin_ws/check_records.txt", "a")
-                    f.write("\nResponse: {}".format(gpt_response))
-                    f.close()
+                gpt_response = gpt_response[0]['text'].strip()
+
+                f = open("/home/rmui1/catkin_ws/check_records.txt", "a")
+                f.write("\nResponse: {}".format(gpt_response))
+                f.close()
                 
                 if gpt_response == '1':
                     print("I'm glad to hear that!")
@@ -335,7 +343,6 @@ if __name__ == '__main__':
 
                 print("Alright, I'll keep looking.")
             
-            global goal_object
             goal_object = ""
 
         if len(goal_object) == 0:
@@ -349,7 +356,7 @@ if __name__ == '__main__':
             vel_msg.angular.z = 0
             velocity_publisher.publish(vel_msg)
 
-            time.sleep(0.5)
+            time.sleep(1.5)
 
             if len(goal_object) > 0:
                 print(goal_object)
