@@ -1,0 +1,22 @@
+Example: I'm hungry. I have the following items: shirt. Which item is best for me? Pick one of the items and 
+                    answer with one word, all lowercase, and no punctuation. If none of the items are good, pick a 
+                    random one, but tell me that its usefulness is 0. Then, rate the object in terms of its usefulness
+                    to me at the moment, from 1 to 10. Explain in second-person point of view. Phrase your response 
+                    in the form: item;number;explanation
+
+
+                    shirt;0;You can't eat a shirt, but it's the only available item.
+
+
+                    Now, consider this new case with the same logic:
+
+
+                 It's raining. . I have the following items: backpack, laptop, umbrella. Which item is best for me? Pick one of the items 
+                        and answer with one word, all lowercase, and no punctuation. If none of the items are 
+                        good, pick a  random one, but tell me that its usefulness is 0. Then, rate the object 
+                        in terms of its usefulness to me at the moment, from 1 to 10. Explain in second-person 
+                        point of view. Phrase your response in the form: item;number;explanation 
+
+
+                    umbrella;10;An umbrella will keep you dry and comfortable in the rain.
+

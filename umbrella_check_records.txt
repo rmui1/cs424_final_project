@@ -1,0 +1,7 @@
+
+Prompt: When asked if they were happy with the service they were provided, a user said, "yes". 
+                                    Is this user satisfied with the service? Answer 0 for no, 1 for yes.
+
+
+                                
+Response: 1

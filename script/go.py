@@ -110,6 +110,10 @@ predict_image.restype = POINTER(c_float)
 net = load_net(bytes(darknet_location + "yolov3.cfg", 'utf-8'), bytes(darknet_location + "yolov3.weights", 'utf-8'), 0)
 meta = load_meta(bytes(darknet_location + "coco.data", 'utf-8'))
 
+def reset_goal_object():
+    global goal_object
+    goal_object = ""
+
 def np_image_to_c_IMAGE(input_frame):
     h, w, c = input_frame.shape
     flattened_image = input_frame.transpose(2, 0, 1).flatten().astype(np.float32)/255.
@@ -160,8 +164,7 @@ def handle_image(data):
     # set goal coordinates to center of bounding box for goal_object
     if goal_object in obj_info:
         goal_coordinates = (int(obj_info[goal_object][1]), int(obj_info[goal_object][0]))
-    else:
-        goal_object = ""
+
     # if len(goal_object) > 0:
     #     print('goal info:', goal_object, goal_score, goal_explanation)
     #     print(goal_coordinates)
@@ -175,14 +178,13 @@ def pick_goal(found_objects):
     global goal_object, goal_score, goal_explanation, reasonable_goal
     
     if len(found_objects) == 0:
-        global goal_object
         goal_object = ""
         return
 
     # ask gpt3 to pick item and score its usefulness from 1-10 (in format: item;score)
     global prompt
     
-    print('asking gpt')
+    # print('asking gpt')
 
     if len(prompt) == 0:
         prompt += '''{} {}. I have the following items: {}. Which item is best for me? Pick one of the items 
@@ -211,6 +213,7 @@ def pick_goal(found_objects):
         continue
 
     print('gpt responded with ', gpt_response)
+    print('current goal object: ', goal_object if len(goal_object) > 0 else 'none')
 
     gpt_response = gpt_response[0]['text'].strip()
 
@@ -230,7 +233,7 @@ def pick_goal(found_objects):
             #     available items are: {}. Pick again from the available items.
             # '''.format(', '.join(found_objects))
 
-    print(goal_object)
+    print(goal_object, found_objects)
 
 def handle_depth_image(data):
     bridge = CvBridge()
@@ -273,25 +276,27 @@ if __name__ == '__main__':
     while len(user_response) == 0:
         continue
 
-    time.sleep(2)
+    time.sleep(5)
 
     while not rospy.is_shutdown():
+
         reached_goal = False
+
+        print(goal_object, goal_coordinates)
+
         if len(goal_object) > 0 and goal_coordinates[0] > 0 and goal_coordinates[1] > 0:
 
             print('have goal coordinates to ', goal_object)
-
-            # print(goal_coordinates[0], distance_to_goal)
-            # print(first_third, last_third)
+            print(distance_to_goal, goal_coordinates[1])
 
             vel_msg = Twist()
             if first_third > 0 and goal_coordinates[1] < first_third:
-                print('right')
-                vel_msg.angular.z = -0.5
-            elif last_third > 0 and goal_coordinates[1] > last_third:
-                print('left')
+                # print('left')
                 vel_msg.angular.z = 0.5
-            elif distance_to_goal > 700:
+            elif last_third > 0 and goal_coordinates[1] > last_third:
+                # print('right')
+                vel_msg.angular.z = -0.5
+            elif distance_to_goal > 500:
                 vel_msg.linear.x = 0.25
             else:
                 vel_msg.linear.x = 0
@@ -299,9 +304,17 @@ if __name__ == '__main__':
                 reached_goal = True
             velocity_publisher.publish(vel_msg)
 
+            if not reached_goal:
+                time.sleep(0.5)
+                vel_msg.linear.x = 0
+                vel_msg.angular.z = 0
+                velocity_publisher.publish(vel_msg)
+                time.sleep(0.5)
+                continue
+
         if reached_goal:
-            print("\n\n\n\n\n\n\nreached goal!!!\n\n\n\n\n\n\n\n\n")
-            print('goal info:', goal_object, goal_score, goal_explanation)
+            # print("\n\n\n\n\n\n\nreached goal!!!\n\n\n\n\n\n\n\n\n")
+            # print('goal info:', goal_object, goal_score, goal_explanation)
             
             if reasonable_goal:
                 # ask user if it meets their needs
@@ -342,21 +355,25 @@ if __name__ == '__main__':
                     break
 
                 print("Alright, I'll keep looking.")
-            
-            goal_object = ""
+                reset_goal_object()
 
         if len(goal_object) == 0:
             rospy.wait_for_message('/odom', Odometry)
             start_orientation = orientation
             while not rospy.is_shutdown() and abs(orientation - start_orientation) < 0.5:
                 vel_msg = Twist()
-                vel_msg.angular.z = 0.75
+                vel_msg.angular.z = 0.5
                 velocity_publisher.publish(vel_msg)
-            
+                        
             vel_msg.angular.z = 0
             velocity_publisher.publish(vel_msg)
 
-            time.sleep(1.5)
+            reset_goal_object()
+            while len(goal_object) == 0:
+                continue
+
+            print("after sleeping: ", goal_object, found_objects)
 
             if len(goal_object) > 0:
-                print(goal_object)
+                # print(goal_object)
+                pass
