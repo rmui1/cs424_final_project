@@ -23,6 +23,14 @@ darknet_location = os.getcwd()[:os.getcwd().find('catkin_ws')] + 'catkin_ws/src/
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
+training_text = '''Example: I'm hungry. I have the following items: shirt. Which item is best for me? Pick one of the items and 
+                    answer with one word, all lowercase, and no punctuation. If none of the items are good, pick a 
+                    random one, but tell me that its usefulness is 0. Then, rate the object in terms of its usefulness
+                    to me at the moment, from 1 to 10. Explain in second-person point of view. Phrase your response 
+                    in the form: item;number;explanation\n\n
+                    shirt;0;You can't eat a shirt, but it's the only available item.\n\n
+                    Now, consider this new case with the same logic:\n\n
+                '''
 prompt = ""
 found_objects = set()
 goal_object = 'nothing'
@@ -139,7 +147,6 @@ def detect(data, thresh=.5, hier_thresh=.5, nms=.45):
     return res
 
 def handle_image(data):
-
     darknet_results = detect(data)
     obj_info = {r[0].decode('utf-8'): r[2] for r in darknet_results}
 
@@ -147,14 +154,15 @@ def handle_image(data):
     global found_objects
     found_objects = set(obj_info.keys())
 
-    if (len(goal_object) == 0 or goal_score == 0) and len(user_response) > 0:
+    if len(goal_object) == 0 and len(user_response) > 0:
         pick_goal(found_objects)
     
     # set goal coordinates to center of bounding box for goal_object
-    global goal_coordinates
+    global goal_coordinates, goal_object
     if goal_object in obj_info:
         goal_coordinates = (int(obj_info[goal_object][1]), int(obj_info[goal_object][0]))
-
+    else:
+        goal_object = ""
     # if len(goal_object) > 0:
     #     print('goal info:', goal_object, goal_score, goal_explanation)
     #     print(goal_coordinates)
@@ -166,6 +174,8 @@ def handle_odom(data):
 
 def pick_goal(found_objects):
     if len(found_objects) == 0:
+        global goal_object
+        goal_object = ""
         return
 
     # ask gpt3 to pick item and score its usefulness from 1-10 (in format: item;score)
@@ -174,11 +184,12 @@ def pick_goal(found_objects):
     print('asking gpt')
 
     if len(prompt) == 0:
-        prompt += '''{}. I have the following items: {}. Which item is best for me? Pick one of the items and 
-                        answer with one word, all lowercase, and no punctuation. Then, rate the object in terms 
-                        of its usefulness to me at the moment, from 1 to 10. Explain in second-person point of view. 
-                        Phrase your response in the form: item;number;explanation\n\n
-                    '''.format(user_response, ', '.join(found_objects))
+        prompt += '''{} {}. I have the following items: {}. Which item is best for me? Pick one of the items 
+                        and answer with one word, all lowercase, and no punctuation. If none of the items are 
+                        good, pick a  random one, but tell me that its usefulness is 0. Then, rate the object 
+                        in terms of its usefulness to me at the moment, from 1 to 10. Explain in second-person 
+                        point of view. Phrase your response in the form: item;number;explanation \n\n
+                    '''.format(training_text, user_response, ', '.join(found_objects))
     else:
         prompt += '''{}. Pick again from these objects: {}. Don't use any previous answers unless
                         there aren't any new answers. If you reuse a previous answer, say the usefulness is 0.
@@ -260,7 +271,7 @@ if __name__ == '__main__':
     
     while not rospy.is_shutdown():
         reached_goal = False
-        if goal_coordinates[0] > 0 and goal_coordinates[1] > 0:
+        if len(goal_object) > 0 and goal_coordinates[0] > 0 and goal_coordinates[1] > 0:
 
             print('have goal coordinates')
 
@@ -324,43 +335,21 @@ if __name__ == '__main__':
 
                 print("Alright, I'll keep looking.")
             
+            global goal_object
             goal_object = ""
 
-        if len(goal_object) == 0 or goal_object not in found_objects:
-            new_goal = goal_object
-            see_new_goal = False
-            while not see_new_goal and not rospy.is_shutdown():
-                # turn in circle, looking for new goal
-                all_found_objects = set()
-                performed_at_least_once = False
+        if len(goal_object) == 0:
+            rospy.wait_for_message('/odom', Odometry)
+            start_orientation = orientation
+            while not rospy.is_shutdown() and abs(orientation - start_orientation) < 0.5:
+                vel_msg = Twist()
+                vel_msg.angular.z = 0.75
+                velocity_publisher.publish(vel_msg)
+            
+            vel_msg.angular.z = 0
+            velocity_publisher.publish(vel_msg)
 
-                rospy.wait_for_message('/odom', Odometry)
-                start_orientation_1 = start_orientation_2 = orientation
-                while not rospy.is_shutdown() and (abs(orientation - start_orientation_1) > 0.01 or not performed_at_least_once):
-                    vel_msg = Twist()
-                    if (abs(orientation - start_orientation_2) < 0.25):
-                        vel_msg.angular.z = 0.75
-                        velocity_publisher.publish(vel_msg)
-                    else:
-                        vel_msg.angular.z = 0
-                        velocity_publisher.publish(vel_msg)
+            time.sleep(0.5)
 
-                        time.sleep(0.5)
-
-                        if len(new_goal) > 0:
-                            print(found_objects)
-
-                            print(new_goal, found_objects, new_goal in found_objects)
-                            if new_goal in found_objects:
-                                see_new_goal = True
-                                break
-
-                        all_found_objects = all_found_objects.union(found_objects)
-
-                        performed_at_least_once = performed_at_least_once or (abs(orientation - start_orientation_1) > 0.25)
-                        start_orientation_2 = orientation
-
-                if not see_new_goal:
-                    print("all: ", all_found_objects)
-                    pick_goal(all_found_objects)
-                    new_goal = goal_object
+            if len(goal_object) > 0:
+                print(goal_object)
