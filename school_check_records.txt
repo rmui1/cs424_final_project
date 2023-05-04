@@ -1,0 +1,13 @@
+
+Prompt: When asked if they were happy with the service they were provided, a user said, "No, I have a lot of books to carry.". 
+                                    Is this user satisfied with the service? Answer 0 for no, 1 for yes.
+
+
+                                
+Response: 0
+Prompt: When asked if they were happy with the service they were provided, a user said, "yup, thanks". 
+                                    Is this user satisfied with the service? Answer 0 for no, 1 for yes.
+
+
+                                
+Response: 1

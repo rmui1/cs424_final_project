@@ -1,0 +1,44 @@
+Example: I'm hungry. I have the following items: shirt. Which item is best for me? Pick one of the items and 
+                    answer with one word, all lowercase, and no punctuation. If none of the items are good, pick a 
+                    random one, but tell me that its usefulness is 0. Then, rate the object in terms of its usefulness
+                    to me at the moment, from 1 to 10. Explain in second-person point of view. Phrase your response 
+                    in the form: item;number;explanation
+
+
+                    shirt;0;You can't eat a shirt, but it's the only available item.
+
+
+                    Now, consider this new case with the same logic:
+
+
+                 I'm a student.. I have the following items: laptop. Which item is best for me? Pick one of the items 
+                        and answer with one word, all lowercase, and no punctuation. If none of the items are 
+                        good, pick a  random one, but tell me that its usefulness is 0. Then, rate the object 
+                        in terms of its usefulness to me at the moment, from 1 to 10. Explain in second-person 
+                        point of view. Phrase your response in the form: item;number;explanation 
+
+
+                    laptop;10;A laptop is a great tool for a student. It can be used to take notes, do research, 
+                    write papers, and so much more. It's essential for studying and learning.
+
+I'm a student. No, I have a lot of books to carry.. Pick again from these objects: laptop. Don't use any previous answers unless
+                        there aren't any new answers. If you reuse a previous answer, say the usefulness is 0.
+                        Phrase your response in the form: item;number;explanation
+
+
+                    laptop;10;A laptop is essential for a student. It can be used to take notes, do research, write papers, and keep track of assignments. It's a great tool for studying and learning.
+
+I'm a student. No, I have a lot of books to carry.. Pick again from these objects: laptop. Don't use any previous answers unless
+                        there aren't any new answers. If you reuse a previous answer, say the usefulness is 0.
+                        Phrase your response in the form: item;number;explanation
+
+
+                    laptop;10;A laptop can be an invaluable tool for a student. It can be used to take notes, do research, write papers, and keep track of assignments. It's an essential tool for studying and learning.
+
+I'm a student. No, I have a lot of books to carry.. Pick again from these objects: backpack. Don't use any previous answers unless
+                        there aren't any new answers. If you reuse a previous answer, say the usefulness is 0.
+                        Phrase your response in the form: item;number;explanation
+
+
+                    backpack;9;A backpack is a great choice for a student. It can carry all of your books, papers, and supplies, making it easy to transport everything you need for class. It's a great way to stay organized and make sure you have everything you need for school.
+

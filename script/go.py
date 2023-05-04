@@ -31,20 +31,6 @@ training_text = '''Example: I'm hungry. I have the following items: shirt. Which
                     shirt;0;You can't eat a shirt, but it's the only available item.\n\n
                     Now, consider this new case with the same logic:\n\n
                 '''
-prompt = ""
-found_objects = set()
-goal_object = ''
-goal_coordinates = (-1, -1)
-goal_score = 0
-goal_explanation = ''
-reasonable_goal = False
-distance_to_goal = -1
-
-first_third = -1
-last_third = -1
-orientation = -1
-
-user_response = ""
 
 class BOX(Structure):
     _fields_ = [("x", c_float),
@@ -155,11 +141,11 @@ def handle_image(data):
     obj_info = {r[0].decode('utf-8'): r[2] for r in darknet_results}
 
     # replace previous set of objects with current set
-    global found_objects, goal_coordinates, goal_object
+    global found_objects, goal_coordinates, goal_object, goal_score, reasonable_goal, goal_explanation
     found_objects = set(obj_info.keys())
 
     if len(goal_object) == 0 and len(user_response) > 0:
-        pick_goal(found_objects)
+        goal_object, goal_score, goal_explanation, reasonable_goal = pick_goal(found_objects)
     
     # set goal coordinates to center of bounding box for goal_object
     if goal_object in obj_info:
@@ -169,17 +155,16 @@ def handle_image(data):
     #     print('goal info:', goal_object, goal_score, goal_explanation)
     #     print(goal_coordinates)
     #     print(found_objects)
+    # print(found_objects)
 
 def handle_odom(data):
     global orientation
     orientation = data.pose.pose.orientation.w
 
 def pick_goal(found_objects):
-    global goal_object, goal_score, goal_explanation, reasonable_goal
-    
     if len(found_objects) == 0:
         goal_object = ""
-        return
+        return '', 0, '', False
 
     # ask gpt3 to pick item and score its usefulness from 1-10 (in format: item;score)
     global prompt
@@ -213,12 +198,11 @@ def pick_goal(found_objects):
         continue
 
     print('gpt responded with ', gpt_response)
-    print('current goal object: ', goal_object if len(goal_object) > 0 else 'none')
 
     gpt_response = gpt_response[0]['text'].strip()
 
-    goal_object, goal_score, goal_explanation = gpt_response.split(';')
-    reasonable_goal = int(goal_score) > 5
+    new_goal_object, new_goal_score, new_goal_explanation = gpt_response.split(';')
+    new_reasonable_goal = int(new_goal_score) > 5
 
     prompt += gpt_response + '\n\n'
 
@@ -226,14 +210,15 @@ def pick_goal(found_objects):
     f.write(prompt)
     f.close()
 
-    if goal_object not in found_objects:
-        goal_object = ""
+    if new_goal_object not in found_objects:
+        return '', 0, '', False
 
             # prompt += '''That's not one of the available items. The 
             #     available items are: {}. Pick again from the available items.
             # '''.format(', '.join(found_objects))
 
-    print(goal_object, found_objects)
+    print(new_goal_object, found_objects)
+    return new_goal_object, new_goal_score, new_goal_explanation, new_reasonable_goal
 
 def handle_depth_image(data):
     bridge = CvBridge()
@@ -258,6 +243,21 @@ def handle_depth_image(data):
         distance_to_goal = -1
 
 if __name__ == '__main__':
+    prompt = ""
+    found_objects = set()
+    goal_object = ''
+    goal_coordinates = (-1, -1)
+    goal_score = 0
+    goal_explanation = ''
+    reasonable_goal = False
+    distance_to_goal = -1
+
+    first_third = -1
+    last_third = -1
+    orientation = -1
+
+    user_response = ""
+
     f = open("/home/rmui1/catkin_ws/check_records.txt", "w")
     f.write("")
     f.close()
@@ -354,12 +354,16 @@ if __name__ == '__main__':
                     print("I'm glad to hear that!")
                     break
 
+                user_response += ' ' + user_satisfaction
                 print("Alright, I'll keep looking.")
                 reset_goal_object()
 
         if len(goal_object) == 0:
             rospy.wait_for_message('/odom', Odometry)
             start_orientation = orientation
+
+            orig_objects = found_objects
+
             while not rospy.is_shutdown() and abs(orientation - start_orientation) < 0.5:
                 vel_msg = Twist()
                 vel_msg.angular.z = 0.5
@@ -369,8 +373,14 @@ if __name__ == '__main__':
             velocity_publisher.publish(vel_msg)
 
             reset_goal_object()
-            while len(goal_object) == 0:
+
+            while not rospy.is_shutdown() and found_objects == orig_objects:
+                print(found_objects)
                 continue
+
+            print('finally loaded')
+
+            goal_object, goal_score, goal_explanation, reasonable_goal = pick_goal(found_objects)
 
             print("after sleeping: ", goal_object, found_objects)
 
